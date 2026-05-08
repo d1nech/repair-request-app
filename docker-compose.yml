@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: repair-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: repair_db
+      POSTGRES_USER: repair_user
+      POSTGRES_PASSWORD: repair_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repair_user -d repair_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    container_name: repair-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/repair_db
+      SPRING_DATASOURCE_USERNAME: repair_user
+      SPRING_DATASOURCE_PASSWORD: repair_password
+      JWT_SECRET: docker-secret-docker-secret-docker-secret-docker-secret-123456
+      JWT_EXPIRATION_MS: 86400000
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: repair-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
