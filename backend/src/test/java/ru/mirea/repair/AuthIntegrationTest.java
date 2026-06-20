@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -93,6 +94,29 @@ class AuthIntegrationTest {
                         .content(objectMapper.writeValueAsString(loginPayload)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty());
+    }
+
+    @Test
+    void unknownPath_returnsNotFoundNotInternalServerError() throws Exception {
+        Map<String, String> registerPayload = Map.of(
+                "email", "probe@example.com",
+                "fullName", "Тестовый Пользователь",
+                "password", "password123"
+        );
+        var registerResult = mockMvc.perform(post("/api/auth/register")
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(registerPayload)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String token = objectMapper.readTree(registerResult.getResponse().getContentAsString())
+                .get("token").asText();
+
+        // Spring 6.1+ выбрасывает NoResourceFoundException для незамапленных путей вместо
+        // прямого sendError(404); без отдельного обработчика она тонет в catch-all -> 500.
+        mockMvc.perform(get("/").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/robots.txt").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
     }
 
     @Test

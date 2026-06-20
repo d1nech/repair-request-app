@@ -27,6 +27,10 @@ ZAP_IMAGE="${ZAP_IMAGE:-ghcr.io/zaproxy/zaproxy:stable}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$REPORT_DIR"
+# Образ ghcr.io/zaproxy/zaproxy запускается под непривилегированным пользователем
+# внутри контейнера (uid 1000), который иначе не может писать в смонтированную
+# директорию хоста (например, на runner'е GitHub Actions она создаётся с правами 755).
+chmod 777 "$REPORT_DIR"
 
 echo "==> Получение JWT-токена администратора для авторизованного скана"
 LOGIN_RESPONSE="$(curl -sf -X POST "$API_URL/api/auth/login" \
