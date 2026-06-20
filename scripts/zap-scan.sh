@@ -27,10 +27,6 @@ ZAP_IMAGE="${ZAP_IMAGE:-ghcr.io/zaproxy/zaproxy:stable}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$REPORT_DIR"
-# Образ ghcr.io/zaproxy/zaproxy запускается под непривилегированным пользователем
-# внутри контейнера (uid 1000), который иначе не может писать в смонтированную
-# директорию хоста (например, на runner'е GitHub Actions она создаётся с правами 755).
-chmod 777 "$REPORT_DIR"
 
 echo "==> Получение JWT-токена администратора для авторизованного скана"
 LOGIN_RESPONSE="$(curl -sf -X POST "$API_URL/api/auth/login" \
@@ -50,6 +46,7 @@ run_scan() {
   local target="$1"
   local label="$2"
   local report_name="zap-${label}-${TIMESTAMP}"
+  local container_name="zapscan-${label}-$$"
 
   echo "==> Сканирование [$label]: $target"
 
@@ -58,19 +55,25 @@ run_scan() {
     docker_args+=(-z "$ZAP_EXTRA_OPTS")
   fi
 
-  # --user сопоставляет процесс в контейнере с хостовым пользователем-владельцем
-  # $REPORT_DIR (по умолчанию образ работает под uid 1000 "zap", у которого нет
-  # доступа к смонтированной директории на раннере GitHub Actions); HOME
-  # переопределён на смонтированный каталог, так как zap.sh пишет туда свои файлы.
-  docker run --rm -t --network host \
-    -v "$REPORT_DIR":/zap/wrk/:rw \
-    --user "$(id -u):$(id -g)" \
-    -e HOME=/zap/wrk \
+  # Намеренно БЕЗ bind-mount: ZAP пишет отчёты в свой внутренний /zap/wrk, где у
+  # пользователя контейнера (uid 1000 "zap") есть права на запись. Монтирование
+  # каталога хоста сюда ломает запись, так как uid контейнера != uid runner'а
+  # (на это не помогает ни chmod, ни --user — путь /home/runner/... недоступен
+  # стороннему uid). Готовые файлы достаём через docker cp (работает от имени
+  # docker-демона, минуя любые ограничения прав).
+  docker rm -f "$container_name" >/dev/null 2>&1 || true
+  docker run --name "$container_name" -t --network host \
     "$ZAP_IMAGE" "${docker_args[@]}"
   local status=$?
 
+  docker cp "$container_name:/zap/wrk/${report_name}.html" "$REPORT_DIR/" 2>/dev/null \
+    || echo "  внимание: HTML-отчёт [$label] не создан" >&2
+  docker cp "$container_name:/zap/wrk/${report_name}.json" "$REPORT_DIR/" 2>/dev/null \
+    || echo "  внимание: JSON-отчёт [$label] не создан" >&2
+  docker rm -f "$container_name" >/dev/null 2>&1 || true
+
   if [ $status -ne 0 ]; then
-    echo "==> ZAP завершился с кодом $status (найдены предупреждения/уязвимости) — см. $REPORT_DIR/${report_name}.html"
+    echo "==> ZAP [$label] завершился с кодом $status (найдены предупреждения/уязвимости) — см. $REPORT_DIR/${report_name}.html"
   fi
   return 0
 }
@@ -79,3 +82,11 @@ run_scan "$API_URL" "api"
 run_scan "$FRONTEND_URL" "frontend"
 
 echo "==> Готово. Отчёты сохранены в $REPORT_DIR"
+ls -la "$REPORT_DIR"
+
+# Если ни одного отчёта не появилось — это ошибка сканирования, а не «успех без
+# артефактов»: падаем явно, чтобы прогон CI стал красным и проблема была видна.
+if ! ls "$REPORT_DIR"/*.html >/dev/null 2>&1; then
+  echo "ОШИБКА: не создано ни одного HTML-отчёта ZAP" >&2
+  exit 1
+fi
