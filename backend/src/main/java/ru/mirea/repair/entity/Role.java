@@ -2,5 +2,7 @@ package ru.mirea.repair.entity;
 
 public enum Role {
     USER,
-    ADMIN
+    ADMIN,
+    MASTER,
+    OPERATOR
 }

@@ -1,12 +1,12 @@
 package ru.mirea.repair;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
+@SpringBootTest
 class RepairRequestAppApplicationTests {
     @Test
-    void smokeTest() {
-        assertTrue(true);
+    void contextLoads() {
+        // Проверяет, что Spring-контекст (бины, security, JPA-маппинги, миграции схемы) поднимается без ошибок.
     }
 }

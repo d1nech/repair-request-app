@@ -41,6 +41,14 @@ public class RepairRequest {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private Category category;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_to")
+    private User assignedMaster;
+
     @PreUpdate
     public void beforeUpdate() {
         updatedAt = LocalDateTime.now();
@@ -66,4 +74,8 @@ public class RepairRequest {
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
+    public Category getCategory() { return category; }
+    public void setCategory(Category category) { this.category = category; }
+    public User getAssignedMaster() { return assignedMaster; }
+    public void setAssignedMaster(User assignedMaster) { this.assignedMaster = assignedMaster; }
 }

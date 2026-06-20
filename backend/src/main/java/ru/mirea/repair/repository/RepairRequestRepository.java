@@ -9,4 +9,5 @@ import java.util.List;
 public interface RepairRequestRepository extends JpaRepository<RepairRequest, Long> {
     List<RepairRequest> findAllByUserOrderByCreatedAtDesc(User user);
     List<RepairRequest> findAllByOrderByCreatedAtDesc();
+    List<RepairRequest> findAllByAssignedMasterOrderByCreatedAtDesc(User assignedMaster);
 }

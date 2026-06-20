@@ -12,6 +12,10 @@ public record RepairRequestResponse(
         String status,
         Long userId,
         String userEmail,
+        Long categoryId,
+        String categoryName,
+        Long assignedMasterId,
+        String assignedMasterEmail,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

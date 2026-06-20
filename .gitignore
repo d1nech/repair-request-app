@@ -26,3 +26,7 @@ Thumbs.db
 
 # Docker/Postgres
 pgdata/
+
+# ZAP scan reports (генерируются заново при каждом запуске scripts/zap-scan.sh или CI)
+docs/zap/reports/*
+!docs/zap/reports/.gitkeep

@@ -1,6 +1,7 @@
 package ru.mirea.repair.config;
 
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -8,7 +9,14 @@ import ru.mirea.repair.entity.*;
 import ru.mirea.repair.repository.RepairRequestRepository;
 import ru.mirea.repair.repository.UserRepository;
 
+/**
+ * Сидинг демо-данных — это admin-процесс (Twelve-Factor App, фактор XII),
+ * поэтому он не выполняется неявно при каждом старте: включается явно
+ * через {@code app.seed-demo-data} (env {@code APP_SEED_DEMO_DATA}) и
+ * предназначен только для локальной разработки/демо-стенда, не для продакшена.
+ */
 @Configuration
+@ConditionalOnProperty(prefix = "app", name = "seed-demo-data", havingValue = "true")
 public class DataInitializer {
     @Bean
     CommandLineRunner initData(UserRepository userRepository,
@@ -33,6 +41,24 @@ public class DataInitializer {
                 return userRepository.save(admin);
             });
 
+            User master = userRepository.findByEmail("master@example.com").orElseGet(() -> {
+                User created = new User();
+                created.setEmail("master@example.com");
+                created.setFullName("Сергей Мастеров");
+                created.setPasswordHash(passwordEncoder.encode("master12345"));
+                created.setRole(Role.MASTER);
+                return userRepository.save(created);
+            });
+
+            userRepository.findByEmail("operator@example.com").orElseGet(() -> {
+                User created = new User();
+                created.setEmail("operator@example.com");
+                created.setFullName("Ольга Операторова");
+                created.setPasswordHash(passwordEncoder.encode("operator12345"));
+                created.setRole(Role.OPERATOR);
+                return userRepository.save(created);
+            });
+
             if (requestRepository.count() == 0) {
                 RepairRequest first = new RepairRequest();
                 first.setTitle("Не включается ноутбук");
@@ -52,6 +78,7 @@ public class DataInitializer {
                 second.setPriority(RequestPriority.MEDIUM);
                 second.setStatus(RequestStatus.IN_PROGRESS);
                 second.setUser(user);
+                second.setAssignedMaster(master);
                 requestRepository.save(second);
             }
         };

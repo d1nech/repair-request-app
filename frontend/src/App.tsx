@@ -1,15 +1,36 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  addComment,
+  assignMaster,
+  classifyRequest,
   createRequest,
   deleteRequest,
+  downloadAttachment,
+  fetchAttachments,
+  fetchCategories,
+  fetchComments,
+  fetchMasters,
   fetchRequests,
+  fetchStatusHistory,
   getErrorMessage,
   login,
   register,
   updateRequest,
-  updateStatus
+  updateStatus,
+  uploadAttachment
 } from './api';
-import { AuthResponse, Priority, RepairRequest, RequestForm, Status } from './types';
+import {
+  Attachment,
+  AuthResponse,
+  Category,
+  Comment,
+  MasterOption,
+  Priority,
+  RepairRequest,
+  RequestForm,
+  Status,
+  StatusHistoryEntry
+} from './types';
 
 const emptyForm: RequestForm = {
   title: '',
@@ -44,12 +65,25 @@ function App() {
   const [password, setPassword] = useState('user12345');
   const [fullName, setFullName] = useState('Новый пользователь');
   const [requests, setRequests] = useState<RepairRequest[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [masters, setMasters] = useState<MasterOption[]>([]);
   const [form, setForm] = useState<RequestForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState<number | null>(null);
+  const [comments, setComments] = useState<Record<number, Comment[]>>({});
+  const [attachments, setAttachments] = useState<Record<number, Attachment[]>>({});
+  const [history, setHistory] = useState<Record<number, StatusHistoryEntry[]>>({});
+  const [commentDraft, setCommentDraft] = useState<Record<number, string>>({});
+
   const isAdmin = user?.role === 'ADMIN';
+  const isOperator = user?.role === 'OPERATOR';
+  const isMaster = user?.role === 'MASTER';
+  const canDispatch = isAdmin || isOperator;
+  const canCreate = user?.role === 'USER' || isAdmin;
 
   const stats = useMemo(() => {
     return requests.reduce(
@@ -77,6 +111,12 @@ function App() {
 
   useEffect(() => {
     loadRequests();
+    if (!user) return;
+    fetchCategories().then(setCategories).catch((error) => setMessage(getErrorMessage(error)));
+    if (canDispatch) {
+      fetchMasters().then(setMasters).catch((error) => setMessage(getErrorMessage(error)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   async function handleAuth(event: FormEvent) {
@@ -134,6 +174,24 @@ function App() {
     }
   }
 
+  async function handleAssign(id: number, masterId: number) {
+    try {
+      await assignMaster(id, masterId);
+      await loadRequests();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleClassify(id: number, categoryId: number) {
+    try {
+      await classifyRequest(id, categoryId);
+      await loadRequests();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   async function handleDelete(id: number) {
     if (!confirm('Удалить заявку?')) return;
     try {
@@ -144,11 +202,94 @@ function App() {
     }
   }
 
+  async function loadDetails(id: number) {
+    setDetailsLoading(id);
+    try {
+      const [c, a, h] = await Promise.all([
+        fetchComments(id),
+        fetchAttachments(id),
+        fetchStatusHistory(id)
+      ]);
+      setComments((prev) => ({ ...prev, [id]: c }));
+      setAttachments((prev) => ({ ...prev, [id]: a }));
+      setHistory((prev) => ({ ...prev, [id]: h }));
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setDetailsLoading(null);
+    }
+  }
+
+  function toggleDetails(id: number) {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    if (!comments[id]) {
+      loadDetails(id);
+    }
+  }
+
+  async function handleAddComment(id: number) {
+    const text = (commentDraft[id] || '').trim();
+    if (!text) return;
+    try {
+      await addComment(id, text);
+      setCommentDraft((prev) => ({ ...prev, [id]: '' }));
+      const updated = await fetchComments(id);
+      setComments((prev) => ({ ...prev, [id]: updated }));
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleUpload(id: number, fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+    try {
+      await uploadAttachment(id, file);
+      const updated = await fetchAttachments(id);
+      setAttachments((prev) => ({ ...prev, [id]: updated }));
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleDownload(requestId: number, attachmentId: number, fileName: string) {
+    try {
+      const blob = await downloadAttachment(requestId, attachmentId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   function logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
     setRequests([]);
+  }
+
+  function canEditDelete(request: RepairRequest) {
+    return isAdmin || request.userId === user?.userId;
+  }
+
+  function canChangeStatus(request: RepairRequest) {
+    return isAdmin || isOperator || (isMaster && request.assignedMasterId === user?.userId);
+  }
+
+  function listTitle() {
+    if (isAdmin) return 'Все заявки';
+    if (isOperator) return 'Все заявки (диспетчеризация)';
+    if (isMaster) return 'Назначенные мне заявки';
+    return 'Мои заявки';
   }
 
   if (!user) {
@@ -179,7 +320,9 @@ function App() {
           </button>
           {message && <div className="message error">{message}</div>}
           <div className="hint">
-            <b>Тест:</b> user@example.com / user12345<br />
+            <b>Клиент:</b> user@example.com / user12345<br />
+            <b>Мастер:</b> master@example.com / master12345<br />
+            <b>Оператор:</b> operator@example.com / operator12345<br />
             <b>Админ:</b> admin@example.com / admin12345
           </div>
         </section>
@@ -204,41 +347,44 @@ function App() {
         <div><b>{stats.DONE}</b><span>Выполнены</span></div>
       </section>
 
-      <section className="panel">
-        <h2>{editingId ? 'Редактирование заявки' : 'Новая заявка'}</h2>
-        <form onSubmit={handleSave} className="grid-form">
-          <label>
-            Тема
-            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          </label>
-          <label>
-            Тип оборудования
-            <input value={form.equipmentType} onChange={(e) => setForm({ ...form, equipmentType: e.target.value })} />
-          </label>
-          <label>
-            Место
-            <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-          </label>
-          <label>
-            Приоритет
-            <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as Priority })}>
-              {Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          <label className="wide">
-            Описание
-            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          </label>
-          <div className="wide actions">
-            <button type="submit">{editingId ? 'Сохранить' : 'Создать'}</button>
-            {editingId && <button type="button" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Отмена</button>}
-          </div>
-        </form>
-        {message && <div className="message">{message}</div>}
-      </section>
+      {canCreate && (
+        <section className="panel">
+          <h2>{editingId ? 'Редактирование заявки' : 'Новая заявка'}</h2>
+          <form onSubmit={handleSave} className="grid-form">
+            <label>
+              Тема
+              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            </label>
+            <label>
+              Тип оборудования
+              <input value={form.equipmentType} onChange={(e) => setForm({ ...form, equipmentType: e.target.value })} />
+            </label>
+            <label>
+              Место
+              <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+            </label>
+            <label>
+              Приоритет
+              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as Priority })}>
+                {Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="wide">
+              Описание
+              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </label>
+            <div className="wide actions">
+              <button type="submit">{editingId ? 'Сохранить' : 'Создать'}</button>
+              {editingId && <button type="button" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Отмена</button>}
+            </div>
+          </form>
+          {message && <div className="message">{message}</div>}
+        </section>
+      )}
+      {!canCreate && message && <div className="message">{message}</div>}
 
       <section className="panel">
-        <h2>{isAdmin ? 'Все заявки' : 'Мои заявки'}</h2>
+        <h2>{listTitle()}</h2>
         {loading ? <p>Загрузка...</p> : (
           <div className="cards">
             {requests.map((request) => (
@@ -252,17 +398,94 @@ function App() {
                   <div><dt>Оборудование</dt><dd>{request.equipmentType}</dd></div>
                   <div><dt>Место</dt><dd>{request.location}</dd></div>
                   <div><dt>Приоритет</dt><dd>{priorityLabels[request.priority]}</dd></div>
-                  {isAdmin && <div><dt>Автор</dt><dd>{request.userEmail}</dd></div>}
+                  {(isAdmin || isOperator) && <div><dt>Автор</dt><dd>{request.userEmail}</dd></div>}
+                  <div><dt>Категория</dt><dd>{request.categoryName || 'Не определена'}</dd></div>
+                  <div><dt>Мастер</dt><dd>{request.assignedMasterEmail || 'Не назначен'}</dd></div>
                 </dl>
                 <div className="actions">
-                  <button onClick={() => startEdit(request)}>Редактировать</button>
-                  {isAdmin && (
+                  {canEditDelete(request) && <button onClick={() => startEdit(request)}>Редактировать</button>}
+                  {canChangeStatus(request) && (
                     <select value={request.status} onChange={(e) => handleStatus(request.id, e.target.value as Status)}>
                       {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </select>
                   )}
-                  <button className="danger" onClick={() => handleDelete(request.id)}>Удалить</button>
+                  {canDispatch && (
+                    <select
+                      value={request.categoryId ?? ''}
+                      onChange={(e) => e.target.value && handleClassify(request.id, Number(e.target.value))}
+                    >
+                      <option value="">Классифицировать...</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>{category.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {canDispatch && (
+                    <select
+                      value={request.assignedMasterId ?? ''}
+                      onChange={(e) => e.target.value && handleAssign(request.id, Number(e.target.value))}
+                    >
+                      <option value="">Назначить мастера...</option>
+                      {masters.map((master) => (
+                        <option key={master.id} value={master.id}>{master.fullName}</option>
+                      ))}
+                    </select>
+                  )}
+                  {canEditDelete(request) && <button className="danger" onClick={() => handleDelete(request.id)}>Удалить</button>}
+                  <button type="button" onClick={() => toggleDetails(request.id)}>
+                    {expandedId === request.id ? 'Скрыть детали' : 'Комментарии и файлы'}
+                  </button>
                 </div>
+
+                {expandedId === request.id && (
+                  <div className="details">
+                    {detailsLoading === request.id ? <p>Загрузка деталей...</p> : (
+                      <>
+                        <div className="details-block">
+                          <h4>Комментарии</h4>
+                          {(comments[request.id] || []).map((comment) => (
+                            <div className="comment" key={comment.id}>
+                              <b>{comment.authorEmail}</b>: {comment.message}
+                            </div>
+                          ))}
+                          {!(comments[request.id] || []).length && <p>Комментариев пока нет.</p>}
+                          <div className="comment-form">
+                            <input
+                              placeholder="Новый комментарий"
+                              value={commentDraft[request.id] || ''}
+                              onChange={(e) => setCommentDraft((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                            />
+                            <button type="button" onClick={() => handleAddComment(request.id)}>Отправить</button>
+                          </div>
+                        </div>
+
+                        <div className="details-block">
+                          <h4>Вложения</h4>
+                          {(attachments[request.id] || []).map((attachment) => (
+                            <div className="attachment" key={attachment.id}>
+                              <button type="button" onClick={() => handleDownload(request.id, attachment.id, attachment.fileName)}>
+                                {attachment.fileName}
+                              </button>
+                            </div>
+                          ))}
+                          {!(attachments[request.id] || []).length && <p>Файлов пока нет.</p>}
+                          <input type="file" onChange={(e) => handleUpload(request.id, e.target.files)} />
+                        </div>
+
+                        <div className="details-block">
+                          <h4>История статусов</h4>
+                          {(history[request.id] || []).map((entry) => (
+                            <div className="history-entry" key={entry.id}>
+                              {entry.oldStatus ? statusLabels[entry.oldStatus] : '—'} → {statusLabels[entry.newStatus]}
+                              {entry.changedByEmail && <span> · {entry.changedByEmail}</span>}
+                            </div>
+                          ))}
+                          {!(history[request.id] || []).length && <p>История пуста.</p>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </article>
             ))}
             {!requests.length && <p>Заявок пока нет.</p>}
