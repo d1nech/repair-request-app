@@ -58,8 +58,14 @@ run_scan() {
     docker_args+=(-z "$ZAP_EXTRA_OPTS")
   fi
 
+  # --user сопоставляет процесс в контейнере с хостовым пользователем-владельцем
+  # $REPORT_DIR (по умолчанию образ работает под uid 1000 "zap", у которого нет
+  # доступа к смонтированной директории на раннере GitHub Actions); HOME
+  # переопределён на смонтированный каталог, так как zap.sh пишет туда свои файлы.
   docker run --rm -t --network host \
     -v "$REPORT_DIR":/zap/wrk/:rw \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/zap/wrk \
     "$ZAP_IMAGE" "${docker_args[@]}"
   local status=$?
 
